@@ -1,0 +1,25 @@
+export STORY_DIR=/Users/tafjord/data/char-centric-story-v2/
+python src/run_multiple_choice.py \
+  --model_name_or_path roberta-base \
+  --do_train \
+  --do_eval \
+  --data_dir $STORY_DIR \
+  --learning_rate 5e-5 \
+  --warmup_steps 0 \
+  --weight_decay 0.01 \
+  --num_train_epochs 1 \
+  --max_seq_length 80 \
+  --max_choices 4 \
+  --output_dir tmpout \
+  --model_save_dir tmpout/model \
+  --logging_dir tmpout/logs \
+  --per_device_eval_batch_size 4 \
+  --per_device_train_batch_size 4 \
+  --gradient_accumulation_steps 2 \
+  --max_summary_len 50 \
+  --max_description_len 50 \
+  --evaluation_strategy epoch \
+  --save_total_limit 1 \
+  --load_best_model_at_end \
+  --use_all_choices_eval \
+  --num_examples 20
