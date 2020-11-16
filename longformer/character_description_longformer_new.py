@@ -623,7 +623,7 @@ def main(args):
     )
 
     print(args)
-    args.dataset_size = 7459
+    args.dataset_size = 7023
 
 
     trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if torch.cuda.is_available() else None,
