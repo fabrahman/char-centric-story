@@ -41,6 +41,7 @@ To train model using bartlong, run:
 ```bash
 sh finetune_disc_bartlong.sh
 ```
+NOTE: Add `--char_length 50` when needed (for partial description).
 
 To generate character name, run:
 
@@ -55,13 +56,13 @@ python generate_texts.py \
 	--char_name_last \
 	--task discriminative
 ```
-
 To compute accuracy of character identification using max probable characters in a set of possible choices, run:
 
 ```
-python -m eval.multiple_choice_char_name_gen \
+python -m eval.multiple_choice_char_name_gen_new \
 	--model_name_or_path char_checkpoints/bart-large-xsum_long_disc \
 	--dataset_file ../data/new/test.jsonl \
-	--out_dir char_checkpoints/bart-large-xsum_long_disc/generation \
+	--out_dir char_checkpoints/bart-large-xsum_long_disc \
 	--device 0
+	--format with-choices
 ```

@@ -4,6 +4,8 @@
 DATA_DIR="/home/faezeb/Char_Desc_Gen/modified_scripts_long/data/new"
 OUT_DIR=""
 
+truncation_method="length" # or "coref"
+
 mkdir -p ${OUT_DIR}
 cp $0 ${OUT_DIR}
 
@@ -23,5 +25,6 @@ python encoder_decoder_long.py \
     --eval_batch_size 8 \
     --max_input_length 2048 \
     --long \
+    --truncation_method=${truncation_method}
     $@
 #--char_name_last \

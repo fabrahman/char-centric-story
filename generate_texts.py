@@ -84,6 +84,12 @@ def main() -> None:
         default="generative",
         help="Whether generative task (description) or discriminative task (name)"
     )
+    parser.add_argument(
+        "--truncation_method",
+        type=str,
+        default="length",
+        help="Whether to truncate by length from the end or to use coref truncated summary?"
+    )
     args = parser.parse_args()
     logger.debug(args)
 
@@ -105,11 +111,12 @@ def main() -> None:
     logger.debug(f"Initializing {args.device}")
 
     tokenizer, model = init_model(args.model_name_or_path, device)
-    args.max_input_length = model.config.max_position_embeddings
+    max_input_length = model.config.max_position_embeddings if "bart" in args.model_name_or_path else args.max_input_length
+    args.max_length = args.max_length if "bart" in args.model_name_or_path else 75
 
     # eos will be added after truncation for language models
     add_eos = False if "gpt" in args.model_name_or_path else True
-    examples = load_data(args.in_file, add_eos=add_eos) if not args.char_name_last else load_data_sep(args.in_file, tokenizer, args.max_input_length, args.task)
+    examples = load_data(args.in_file, add_eos=add_eos, truncation_method=args.truncation_method) if not args.char_name_last else load_data_sep(args.in_file, tokenizer, max_input_length, args.task)
 
     special_tokens = ["[name]", "[sum]", "[desc]", "<eos>", "[MASK]"]
 
@@ -143,6 +150,7 @@ def main() -> None:
                 logger.info(exp)
                 preds = []
 
+#            trimmed_input = trim_input_to_max_len(tokenizer, input)
             f_out.write(
                 json.dumps({"input": trimmed_input, "gold": output, "predictions": preds})
                 + "\n"
@@ -179,6 +187,10 @@ def generate_conditional(tokenizer, model, args, input, device):
 
     preds = [tokenizer.decode(
         output, skip_special_tokens=True, clean_up_tokenization_spaces=False) for output in outputs]
+#    trimmed_input = tokenizer.decode(
+#        input_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+
+#    print(preds)
 
     # truncate input to max_input_length
     trimmed_input = trim_input_to_max_len(tokenizer, input, max_input_length)
@@ -197,7 +209,10 @@ def generate_regular(tokenizer, model, args, input, device):
     trimmed_input_text = tokenizer.decode(context_tokens, skip_special_tokens=True)
 
     max_length = args.max_length + len(context_tokens)
+#    print(max_length, len(context_tokens))
     input_ids = torch.tensor(context_tokens, device=device).unsqueeze(0)
+#    print(input_ids.shape)
+
 
     outputs = model.generate(
         input_ids=input_ids,
@@ -214,11 +229,17 @@ def generate_regular(tokenizer, model, args, input, device):
         num_return_sequences=1 #max(1, args.beams)
     )
 
+#    print(max_length, input_ids.shape)
+#    print(outputs, outputs[0].shape)
 
     preds = [tokenizer.decode(output, skip_special_tokens=True)[len(trimmed_input_text):].strip() for output in outputs]
+#    print(preds)
 #    preds = [". ".join(pred.split(".",-1)[:-1]) for pred in preds]
 #    preds = [pred.split(".")[0] for pred in preds]
     
+
+    # truncate input to max_input_length
+#    trimmed_input = trim_input_to_max_len(tokenizer, input, max_input_length)
 
     return preds, trimmed_input_text
 

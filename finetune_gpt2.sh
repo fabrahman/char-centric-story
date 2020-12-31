@@ -5,7 +5,7 @@ DATA_DIR="/home/faezeb/Char_Desc_Gen/modified_scripts_long/data/new"
 OUT_DIR=""
 
 mkdir -p ${OUT_DIR}
-
+cp $0 ${OUT_DIR}
 
 python generative.py \
     --train_file ${DATA_DIR}/train.jsonl \
@@ -22,5 +22,6 @@ python generative.py \
     --gradient_accumulation_steps 4 \
     --train_batch_size 2 \
     --eval_batch_size 8 \
+    --truncation_method coref \
     $@
 #--char_name_last \

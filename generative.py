@@ -86,7 +86,7 @@ class TextDataset(Dataset):
                 self.examples = pickle.load(handle)
         else:
             logger.info("Converting to token IDs")
-            examples = load_data_sep(file_path, tokenizer, args.max_input_length) if args.char_name_last else load_data(file_path, add_eos=False)
+            examples = load_data_sep(file_path, tokenizer, args.max_input_length) if args.char_name_last else load_data(file_path, add_eos=False, truncation_method=args.truncation_method)
             logger.info(examples[:2])
 
             # truncate = (self.__truncate__ if args.char_name_first else self.__truncate2__)
@@ -307,6 +307,12 @@ def main():
         default="generative",
         help="Whether generative task (description) or discriminative task (name)"
     )
+    parser.add_argument(
+        "--truncation_method",
+        type=str,
+        default="length",
+        help="Whether to truncated by length from teh end or uding coref truncated summary?"
+    )
     args = parser.parse_args()
 
     if args.eval_data_file is None and args.do_eval:
@@ -317,7 +323,7 @@ def main():
 
     if (
         os.path.exists(args.out_dir)
-        and os.listdir(args.out_dir)
+        and len(os.listdir(args.out_dir)) > 1
         and args.do_train
         and not args.overwrite_out_dir
         and not args.continue_training

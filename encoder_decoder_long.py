@@ -11,7 +11,7 @@ import argparse
 from torch.utils.data import Dataset
 from torch.nn import CrossEntropyLoss
 
-from common import init_model, load_data, init_model_from_config, load_data_sep
+from common import init_model, load_data, init_model_from_config, load_data_sep, load_data_flexi
 from generative import evaluate, train, set_seed
 
 
@@ -29,7 +29,7 @@ class EncoderDecoderTextDataset(Dataset):
         directory, filename = os.path.split(file_path)
         name_pos = "name_last" if args.char_name_last else "name_first"
         model_name = args.model_name_or_path.split("/")[-1]
-        filename = f"{model_name}_cached_{block_size}_{name_pos}_{filename}"
+        filename = f"{model_name}_cached_{block_size}_{name_pos}_char-len{args.char_length}_{filename}"
         cached_features_file = os.path.join(directory, filename)
 
         if os.path.exists(cached_features_file) and not args.overwrite_cache:
@@ -38,7 +38,7 @@ class EncoderDecoderTextDataset(Dataset):
                 self.examples = pickle.load(handle)
         else:
             logger.info("Converting to token IDs")
-            examples = load_data_sep(file_path, tokenizer, args.max_input_length, args.task) if args.char_name_last else load_data(file_path)
+            examples = load_data_flexi(file_path, args.task, char_len=args.char_length, truncation_method=args.truncation_method) #load_data_sep(file_path, tokenizer, args.max_input_length, args.task) if args.char_name_last else load_data(file_path)
             logger.info(examples[:1])
 
             # Add prefix to the output so we can predict the first real token in the decoder
@@ -78,9 +78,9 @@ class EncoderDecoderTextDataset(Dataset):
                 "output_lengths": output_lengths,
             }
 
-        logger.info(f"Saving features into cached file {cached_features_file}")
-        with open(cached_features_file, "wb") as handle:
-            pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+#        logger.info(f"Saving features into cached file {cached_features_file}")
+#        with open(cached_features_file, "wb") as handle:
+#            pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def __len__(self):
         return len(self.examples["input_lengths"])
@@ -278,7 +278,7 @@ def main():
     parser.add_argument(
         "--char_name_last",
         action="store_true",
-        help="character name comes/desc after the summary ([sum] summary [char] char_name/desc)",
+        help="character name comes after the orig summary ([sum] summary [char] char_name)",
     )
     parser.add_argument(
         "--task",
@@ -287,9 +287,21 @@ def main():
         help="Whether generative task (description) or discriminative task (name)"
     )
     parser.add_argument(
+        "--truncation_method",
+        type=str,
+        default="length",
+        help="Whether to truncate by length from the end or to use coref truncated summary?"
+    )
+    parser.add_argument(
         "--long",
         action="store_true",
         help="if making long version by extending positional embedding",
+    )
+    parser.add_argument(
+        "--char_length",
+        type=int,
+        default=None,
+        help="max masked character description length",
     )
     args = parser.parse_args()
 
@@ -298,6 +310,7 @@ def main():
             "Cannot do evaluation without an evaluation data file. Either supply --eval_data_file "
             "or remove the --do_eval argument."
         )
+
 
     if (
         os.path.exists(args.out_dir)
@@ -361,7 +374,7 @@ def main():
 
     # Add special tokens (if loading a model before fine-tuning)
     if args.do_train and not args.continue_training:
-        special_tokens = ["[name]", "[sum]", "[desc]", "<eos>", "[MASK]"]
+        special_tokens = ["[name]", "[sum]", "[desc]", "<eos>", "[MASK]", "[choices]"]
         tokenizer.pad_token = "<pad>"
         tokenizer.eos_token = "<eos>"
         tokenizer.add_tokens(special_tokens)
