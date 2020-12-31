@@ -27,26 +27,6 @@ from pytorch_lightning.overrides.data_parallel import LightningDistributedDataPa
 from longformer import LongformerEncoderDecoderForConditionalGeneration, LongformerEncoderDecoderConfig
 from longformer.sliding_chunks import pad_to_window_size
 
-#from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
-#from common import load_data
-
-# from huggingface.utils import (
-#     use_task_specific_params,
-#     SummarizationDataset,
-#     lmap,
-#     flatten_list,
-#     pickle_save,
-#     save_git_info,
-#     freeze_params,
-#     calculate_rouge,
-#     get_git_info,
-#     ROUGE_KEYS,
-#     pickle_load,
-#     get_led,
-#     get_red,
-#     get_bart,
-# )
-
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 logging.basicConfig(
@@ -162,41 +142,67 @@ def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=-100):
     loss = (1.0 - epsilon) * nll_loss + eps_i * smooth_loss
     return loss, nll_loss
 
-def encode_file(tokenizer, data_path, max_length, overwrite_cache=False, tok_name=""):
-    cache_path = Path(f"{data_path}_{tok_name}{max_length}.pt")
-    if not overwrite_cache and cache_path.exists():
-        try:
-            examples = torch.load(str(cache_path))
-            assert isinstance(examples, list)
-            return examples
+def _truncate(process, data, max_length):
+    source = []
+    target = []
+    for i in range(len(data)):
+        if len(process(f"[sum] [desc] {data[i]['masked_description']} [name]")) > max_length:
+            continue
+        while True:
+            input_seq = "[sum] " + data[i]['summary'] + " [desc] " + data[i]['masked_description']+ " [name]"
+            ids = process(input_seq)
+            if len(ids) <= max_length:
+                source.append(input_seq)
+                target.append(data[i]['character_name'] + " <eos>")
+                break
+            summ_ = lst1[i].split()
+            data[i]['summary'] = " ".join(summ_[:-5])
+        if i % 500 == 0:
+            print(f"{i} processed from {len(data)}")
+    return source, target
 
-        except Exception:
-            print(f"failed to load from {cache_path}, retokenizing {data_path}")
+def encode_file(tokenizer, data_path, max_input_len, max_output_len, overwrite_cache=False, tok_name="", char_len=None):
+    # cache_path = Path(f"{data_path}_{tok_name}{max_length}.pt")
+    # if not overwrite_cache and cache_path.exists():
+    #     try:
+    #         examples = torch.load(str(cache_path))
+    #         assert isinstance(examples, list)
+    #         return examples
+    #
+    #     except Exception:
+    #         print(f"failed to load from {cache_path}, retokenizing {data_path}")
     data_dir = Path(data_path)
 
-    lns = lmap(str.strip, data_dir.open().readlines())
-    # lns = [prefix + text for text in lns]
+    # lns = lmap(str.strip, data_dir.open().readlines())
+    lns = [json.loads(line.strip()) for line in data_dir.open()]
     assert lns, f"found empty file at {data_dir}"
 
-    examples = []
-    char_len = []
-    for text in tqdm(lns, desc=f"Tokenizing {data_dir.name}"):
-        tokenized = tokenizer.encode(text, truncation=True, max_length=max_length)
-        examples.append(tokenized)
-        if data_path.endswith("source"):
-            # end_index = text.find(" [sum]")
-            assert " [sum] " in text, "[sum] not found in the input!"
-            end_index = len(tokenizer.encode(text.split(" [sum] ")[0]))
-            char_len.append([end_index])
+    # process = lambda s: tokenizer.convert_tokens_to_ids(tokenizer.tokenize(s))
+    # src, trg = _truncate(process, lns, max_input_len)
+    #
+    # sources = []
+    # for text in tqdm(src, desc=f"Tokenizing source in {data_dir.name}"):
+    #     tokenized_src = tokenizer.encode(text, truncation=True, max_length=max_input_len)
+    #     sources.append(tokenized_src)
+    #
+    # targets = []
+    # for text in tqdm(trg, desc=f"Tokenizing target in {data_dir.name}"):
+    #     tokenized_trg = tokenizer.encode(text, truncation=True, max_length=max_output_len)
+    #     targets.append(tokenized_trg)
 
-    # if truncation_strategy == CustomTruncationStrategy.RANDOM_START:
-    #     outfile = Path(f"{data_path}_{tok_name}{max_length}_randomstartinfo.txt")
-    #     tokenizer.save_random_start_info(outfile)
+    sources = []
+    targets = []
+    for line in tqdm(lns, desc=f"Tokenizing {data_dir.name}"):
+        source = f"[choices] {', '.join(line['multichoice']['choices'])} [desc] {trim_str(line['masked_description'], char_len)} " \
+                 f"[sum] {line['coref_truncated_summary'] if 'coref_truncated_summary' in line else line['summary']} [name]"
+        tokenized_src = tokenizer.encode(source, truncation=True, max_length=max_input_len)
+        sources.append(tokenized_src)
+        target = line["character_name"] + " <eos>"
+        tokenized_trg = tokenizer.encode(target, truncation=True, max_length=max_output_len)
+        targets.append(tokenized_trg)
 
-    # torch.save(lmap(dict, examples), cache_path.open("wb"))
-
-
-    return examples, char_len
+    print(source, target)
+    return sources, targets
 
 def lmap(f, x):
     return list(map(f, x))
@@ -204,6 +210,9 @@ def lmap(f, x):
 def flatten_list(summary_ids: List[List]):
     return [x for x in itertools.chain.from_iterable(summary_ids)]
 
+def trim_str(txt, max_len):
+    max_len = len(txt.split()) if max_len is None else max_len
+    return " ".join(txt.split()[:max_len]).strip("Read an ")
 
 class SummarizationDataset(Dataset):
     def __init__(
@@ -214,23 +223,22 @@ class SummarizationDataset(Dataset):
             max_output_len=75,
             type_path="train",
             overwrite_cache=False,
+            char_len=None
     ):
 
         tok_name = tokenizer.__class__.__name__.lower().rstrip("tokenizer")
         self.tokenizer = tokenizer
 
-        self.source, self.char_length = encode_file(
+        self.source, self.target = encode_file(
             tokenizer,
-            os.path.join(data_dir, type_path + ".source"),
+            os.path.join(data_dir, type_path + ".jsonl"),
             max_input_len,
+            max_output_len,
             overwrite_cache=overwrite_cache,
             tok_name=tok_name,
+            char_len=char_len,
         )
 
-        tgt_path = os.path.join(data_dir, type_path + ".target")
-        self.target, _ = encode_file(
-            tokenizer, tgt_path, max_output_len, overwrite_cache=overwrite_cache, tok_name=tok_name
-        )
 
     def __len__(self):
         return len(self.source)
@@ -241,10 +249,9 @@ class SummarizationDataset(Dataset):
         # output_ids = self.tokenizer.encode(entry[1], truncation=True, max_length=self.max_output_len)
         input_ids = self.source[idx]
         output_ids = self.target[idx]
-        character_len = self.char_length[idx]
         if self.tokenizer.bos_token_id is None:  # pegasus
             output_ids = [self.tokenizer.pad_token_id] + output_ids
-        return torch.tensor(input_ids), torch.tensor(output_ids), torch.tensor(character_len)
+        return torch.tensor(input_ids), torch.tensor(output_ids)
 
     @staticmethod
     def collate_fn(batch):
@@ -256,10 +263,10 @@ class SummarizationDataset(Dataset):
         else:
             assert False
 
-        input_ids, output_ids, char_len = list(zip(*batch))
+        input_ids, output_ids = list(zip(*batch))
         input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=pad_token_id)
         output_ids = torch.nn.utils.rnn.pad_sequence(output_ids, batch_first=True, padding_value=pad_token_id)
-        return input_ids, output_ids, char_len
+        return input_ids, output_ids
 
 
 
@@ -291,11 +298,13 @@ class Summarizer(pl.LightningModule):
         self.tokenizer.add_tokens(special_tokens)
         self.model.resize_token_embeddings(len(self.tokenizer))
         self.tokenizer.save_pretrained(args.save_dir)
+        config.to_json_file(os.path.join(args.save_dir, "config.json"))
 
         # faeze added
         self.dataset_kwargs: dict = dict(
             data_dir=self.hparams.data_dir,
             max_input_len=self.hparams.max_input_len,
+            char_len=self.args.char_length
         )
         n_observations_per_split = {
             "train": self.hparams.n_train,
@@ -318,18 +327,11 @@ class Summarizer(pl.LightningModule):
 
         # up to here
 
-    def _prepare_input(self, input_ids, char_len):
+    def _prepare_input(self, input_ids):
         attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
         attention_mask[input_ids == self.tokenizer.pad_token_id] = 0
         if isinstance(self.model, LongformerEncoderDecoderForConditionalGeneration):
-#            print(char_len)
-            # TODO: the char_len[0] only works for batch size of 1! should fix it to work with all batch sizes (Faeze)
-            # # potential sol
-            # char_mask = torch.zeros_like(attention_mask)
-            # char_mask[(torch.arange(attention_mask.shape[0]), char_len)] = 1
-            # char_mask = 1 - char_mask.cumsum(dim=-1)
-            # attention_mask[char_mask.book()] = 2
-            attention_mask[:, :char_len[0].item()] = 2  # global attention on one token for all model params to be used, which is important for gradient checkpointing to work
+            attention_mask[:, 0] = 2  # global attention on one token for all model params to be used, which is important for gradient checkpointing to work
             if self.args.attention_mode == 'sliding_chunks':
                 half_padding_mod = self.model.config.attention_window[0]
             elif self.args.attention_mode == 'sliding_chunks_no_overlap':
@@ -340,8 +342,8 @@ class Summarizer(pl.LightningModule):
                 input_ids, attention_mask, half_padding_mod, self.tokenizer.pad_token_id)
         return input_ids, attention_mask
 
-    def forward(self, input_ids, output_ids, char_len):
-        input_ids, attention_mask = self._prepare_input(input_ids, char_len)
+    def forward(self, input_ids, output_ids):
+        input_ids, attention_mask = self._prepare_input(input_ids)
         decoder_input_ids = output_ids[:, :-1]
         decoder_attention_mask = (decoder_input_ids != self.tokenizer.pad_token_id)
         labels = output_ids[:, 1:].clone()
@@ -380,8 +382,8 @@ class Summarizer(pl.LightningModule):
 
         outputs = self.forward(*batch)
         vloss = outputs[0]
-        input_ids, output_ids, char_len = batch
-        input_ids, attention_mask = self._prepare_input(input_ids, char_len)
+        input_ids, output_ids = batch
+        input_ids, attention_mask = self._prepare_input(input_ids)
         generated_ids = self.model.generate(input_ids=input_ids, attention_mask=attention_mask,
                                             use_cache=True, max_length=self.args.max_output_len,
                                             num_beams=self.eval_beams)
@@ -428,18 +430,17 @@ class Summarizer(pl.LightningModule):
         source = flatten_list([x["trimmed_input"] for x in outputs])
         preds = flatten_list([x["preds"] for x in outputs])
         target = flatten_list([x["target"] for x in outputs])
-        if prefix == "test":
-            self.write_generation(source, preds, target, prefix)
+        # if prefix == "test":
+        self.write_generation(source, preds, target, prefix)
         print(logs)
         return {'avg_val_loss': logs['vloss'], 'log': logs, 'progress_bar': logs, 'source': source, 'preds': preds, 'target': target}
 
     def write_generation(self, src_str, pred_str, gold_str, prefix):
-        # generation_path = Path(self.args.save_dir) / f"{prefix}_generation.txt"
-        generation_path = Path(self.args.save_dir) / f"generation"
-        Path(generation_path).mkdir(exist_ok=True, parents=True)
-        out_jfile = f"{prefix}_prediction_beams{self.eval_beams}_maxlen_{self.args.max_output_len}.jsonl"
-        with open(os.path.join(generation_path, out_jfile), 'w') as f_out:
-            for inp, output, pred in zip(src_str, gold_str,pred_str):
+        # generation_path = Path(self.args.save_dir) / f"{prefix}_prediction_beams{self.eval_beams}_maxlen_{self.args.max_output_len}.jsonl" #f"{prefix}_generation.txt"
+        generation_path = os.path.join(self.args.save_dir, f"{prefix}_prediction_beams{self.eval_beams}_maxlen_{self.args.max_output_len}.jsonl")
+        # Path(generation_path).mkdir(exist_ok=True, parents=True)
+        with open(generation_path, 'w') as f_out:
+            for inp, output, pred in zip(src_str, gold_str, pred_str):
                 f_out.write(
                     json.dumps({"input": inp, "gold": output, "predictions": pred})
                     + "\n"
@@ -605,6 +606,7 @@ class Summarizer(pl.LightningModule):
         parser.add_argument("--n_test", type=int, default=-1, required=False, help="# examples. -1 means use all.")
         parser.add_argument("--eval_beams", type=int, default=5, required=False)
         parser.add_argument("--best_checkpoint", type=str, default=None, required=False)
+        parser.add_argument("--char_length", type=int, default=None, help="max masked character description length")
 
         return parser
 
@@ -615,7 +617,6 @@ def main(args):
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
-
     model = Summarizer(args, pad_to_length=False)
     # model.hf_datasets = nlp.load_dataset('scientific_papers', 'arxiv')
 
@@ -636,7 +637,7 @@ def main(args):
     )
 
     print(args)
-    args.dataset_size = 7600 #7023
+    args.dataset_size = 7023
 
 
     trainer = pl.Trainer(gpus=args.gpus, distributed_backend='ddp' if torch.cuda.is_available() else None,
@@ -660,9 +661,12 @@ def main(args):
     if not args.test:
         trainer.fit(model) # Faeze: can have trainer.fit(model, train_dataloader, val_dataloader) if the model has predefined dataloader this will be skipped!
 
-#    model.save_pretrained(args.save_dir)
     if args.best_checkpoint:
-        trainer.test(model, ckpt_path=args.best_checkpoint)
+#        trainer.test(model, ckpt_path=args.best_checkpoint)
+        hparams = torch.load(args.best_checkpoint)['hyper_parameters']
+        model = model.load_from_checkpoint(checkpoint_path=args.best_checkpoint, **hparams)
+        model.eval()
+        print(model.learning_rate)
     else:
         trainer.test(model)
 

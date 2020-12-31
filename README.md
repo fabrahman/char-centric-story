@@ -41,7 +41,7 @@ To train model using bartlong, run:
 ```bash
 sh finetune_disc_bartlong.sh
 ```
-NOTE: Add `--char_length 50` when needed (for partial description).
+**NOTE**: Add `--char_length 50` when needed (for partial description).
 
 To generate character name, run:
 
@@ -66,3 +66,4 @@ python -m eval.multiple_choice_char_name_gen_new \
 	--device 0
 	--format with-choices
 ```
+**NOTE** : used env long2 for longformer and py37 for bart baselines.
