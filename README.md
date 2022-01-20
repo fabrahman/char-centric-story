@@ -1,7 +1,10 @@
 ## "Let Your Characters Tell Their Story": A Dataset for Character-Centric Narrative Understanding
 
+### Dataset: LiSCU
 Please follow the instruction [here](https://github.com/huangmeng123/lit_char_data_wayback) to recreate the LiSCU dataset.
 
+
+### Code
 Before you start, make sure you have installed all the requiremenets in the `requiremenets.txt`.
 
 Note that the code is still being cleaned.
