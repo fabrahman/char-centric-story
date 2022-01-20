@@ -1,6 +1,10 @@
-## Character-Centric Story Understanding
+## "Let Your Characters Tell Their Story": A Dataset for Character-Centric Narrative Understanding
+
+Please follow the instruction [here](https://github.com/huangmeng123/lit_char_data_wayback) to recreate the LiSCU dataset.
 
 Before you start, make sure you have installed all the requiremenets in the `requiremenets.txt`.
+
+Note that the code is still being cleaned.
 
 ### Generative: character description generation
 
@@ -66,4 +70,4 @@ python -m eval.multiple_choice_char_name_gen_new \
 	--device 0
 	--format with-choices
 ```
-**NOTE** : used env long2 for longformer and py37 for bart baselines.
+#**NOTE** : used env long2 for longformer and py37 for bart baselines.
